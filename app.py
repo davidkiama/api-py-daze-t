@@ -6,6 +6,9 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify, redirect
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import time
 import logging
 import json
@@ -291,6 +294,52 @@ def oxapay_webhook():
         app.logger.exception("Webhook Processing Error")
         db.session.rollback()
         return "error", 500
+
+
+# =========================================
+# 4. CONTACT FORM EMAIL
+# =========================================
+
+@app.route("/api/contact", methods=["POST"])
+def contact_form():
+    try:
+        data = request.get_json()
+        name = data.get("name")
+        email = data.get("email")
+        message = data.get("message")
+
+        if not name or not email or not message:
+            return jsonify({"error": "All fields are required"}), 400
+
+        # Email Configuration (Use variables from your .env)
+        sender_email = os.getenv("EMAIL_USER")  # e.g., "system@daze-t.com"
+        sender_password = os.getenv("EMAIL_PASS")
+        admin_email = "admin@daze-t.com"
+
+        # Create Email
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = admin_email
+        msg['Subject'] = f"New Contact Form: {name}"
+
+        body = f"Name: {name}\nEmail: {email}\n\nMessage:\n{message}"
+        msg.attach(MIMEText(body, 'plain'))
+
+        # Send using SMTP (assuming Gmail/CPanel/Outlook)
+        # For CPanel: use 'localhost' or your mail server domain on port 465 or 587
+        with smtplib.SMTP_SSL("mail.daze-t.com", 465) as server:
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+
+        # Optional: Send a Telegram Alert too!
+        send_telegram_alert(
+            f"✉️ <b>New Message Received</b>\nFrom: {name}\nEmail: {email}")
+
+        return jsonify({"success": "Message sent!"}), 200
+
+    except Exception as e:
+        app.logger.exception("Contact Form Error")
+        return jsonify({"error": "Failed to send message"}), 500
 
 
 if __name__ == "__main__":
