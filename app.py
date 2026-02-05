@@ -81,6 +81,8 @@ OXAPAY_KEY = os.getenv('OXAPAY_API_KEY')
 PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', "https://api.daze-t.com")
 FRONTEND_URL = os.getenv('FRONTEND_URL', "https://daze-t.com")
 
+NOWPAYMENTS_API_KEY = os.getenv('NOWPAYMENTS_API_KEY')
+
 # --- TELEGRAM HELPER ---
 
 
@@ -138,42 +140,35 @@ def create_trade():
         my_order_id = f"INV-{int(time.time() * 1000)}"
 
         # OxaPay Request
-        url = "https://api.oxapay.com/v1/payment/invoice"
-        headers = {"merchant_api_key": OXAPAY_KEY,
+        url = "https://api.nowpayments.io/v1/invoice"
+        headers = {"x-api-key": NOWPAYMENTS_API_KEY,
                    "Content-Type": "application/json"}
 
         payload = {
-            "amount": usd,
-            "currency": "USD",
-            "lifetime": 30,
-            "fee_paid_by_payer": 1,
-            "under_paid_coverage": 2,
-            "to_currency": "USDT",
-            "auto_withdrawal": False,
-            "mixed_payment": True,
-            "callback_url": f"{PUBLIC_BASE_URL}/oxapay/webhook",
-            "return_url": f"{PUBLIC_BASE_URL}/api/success-redirect?orderId={my_order_id}",
+
+            "price_amount": usd,
+            "price_currency": "usd",
             "order_id": my_order_id,
-            "thanks_message": "Thank you. Awaiting Blockchain confirmation...",
-            "description": f"Order for {phone}",
-            "sandbox": False,
+            "order_description": f"Order for {phone}",
+            "ipn_callback_url": f"{PUBLIC_BASE_URL}/nowpayment/webhook",
+            "success_url": f"{PUBLIC_BASE_URL}/api/success-redirect?orderId={my_order_id}",
+            "cancel_url": f"{PUBLIC_BASE_URL}/api/success-redirect?orderId={my_order_id}",
         }
 
         response = requests.post(
             url, json=payload, headers=headers, timeout=10)
         result = response.json()
 
-        if result.get("status") == 200:
-            res_data = result.get("data", {})
+        if result.get('id'):
 
             # Save to MySQL
             new_invoice = Invoice(
                 order_id=my_order_id,
-                invoice_id=res_data.get("track_id"),
+                invoice_id=result.get('id'),
                 phone=phone,
                 amount_usd=usd,
                 amount_kes=kes,
-                pay_url=res_data.get("payment_url"),
+                pay_url=result.get('invoice_url'),
                 raw_response=json.dumps(result)  # Save raw JSON as string
             )
 
@@ -181,12 +176,12 @@ def create_trade():
             db.session.commit()
 
             return jsonify({
-                "payment_url": res_data.get("payment_url"),
-                "track_id": res_data.get("track_id")
+                "payment_url": result.get('invoice_url'),
+                "track_id": result.get('id')
             })
         else:
-            app.logger.error(f"OxaPay Error: {result.get('message')}")
-            return jsonify({"error": result.get("message", "OxaPay failed")}), 400
+            app.logger.error(f"NowPay Error: {result.get('message')}")
+            return jsonify({"error": result.get("message", "Nowpay failed")}), 400
 
     except Exception as e:
         app.logger.exception("Create Trade Error")
@@ -225,73 +220,96 @@ def success_redirect():
         app.logger.exception("Redirect Error")
         return redirect(FRONTEND_URL)
 
+
 # =========================================
 # 3. WEBHOOK (With Security Checks)
 # =========================================
-
-
-@app.route("/oxapay/webhook", methods=["POST"])
-def oxapay_webhook():
-    hmac_header = request.headers.get("hmac")
-    raw_body = request.get_data()
-
-    if not raw_body:
-        return "Raw body missing", 400
-
-    # 1. HMAC Verification (Security against fake requests)
+@app.route("/nowpayment/webhook", methods=["POST"])
+def nowpayment_webhook():
+    print('WEBHOOK CALLED')
     try:
-        calculated_hmac = hmac.new(
-            key=OXAPAY_KEY.encode('utf-8'),
-            msg=raw_body,
-            digestmod=hashlib.sha512
-        ).hexdigest()
-
-        # Secure comparison to prevent timing attacks
-        if not hmac.compare_digest(calculated_hmac, hmac_header or ""):
-            app.logger.warning("Unauthorized Webhook Attempt (Bad HMAC)")
+        # 1️⃣ Read signature
+        received_sig = request.headers.get("x-nowpayments-sig")
+        if not received_sig:
+            app.logger.warning("Missing x-nowpayments-sig")
             return "Unauthorized", 401
 
-    except Exception as e:
-        app.logger.error(f"HMAC Error: {e}")
-        return "Error", 500
+        # 2️⃣ Load JSON body
+        payload = request.get_json()
 
-    # 2. Process Data
-    try:
-        data = request.get_json()
-        track_id = data.get("track_id")
-        status = data.get("status", "").lower()
+        print('PAYLOAD ********', payload)
+        if not payload:
+            return "Invalid payload", 400
 
-        invoice = Invoice.query.filter_by(invoice_id=track_id).first()
+        # 3️⃣ Sort payload recursively
+        def sort_object(obj):
+            if isinstance(obj, dict):
+                return {k: sort_object(obj[k]) for k in sorted(obj)}
+            if isinstance(obj, list):
+                return [sort_object(i) for i in obj]
+            return obj
 
+        sorted_payload = sort_object(payload)
+
+        # 4️⃣ Create HMAC
+        ipn_secret = os.getenv("NOWPAYMENTS_IPN_SECRET").strip()
+        signed_payload = json.dumps(
+            sorted_payload,
+            separators=(',', ':')
+        )
+
+        calculated_sig = hmac.new(
+            ipn_secret.encode(),
+            signed_payload.encode(),
+            hashlib.sha512
+        ).hexdigest()
+
+        # 5️⃣ Compare signatures
+        if not hmac.compare_digest(calculated_sig, received_sig):
+            app.logger.warning("Invalid NOWPayments signature")
+            return "Unauthorized", 401
+
+        # 6️⃣ Extract data
+        payment_status = payload.get("payment_status", "").lower()
+        invoice_id = payload.get("invoice_id")
+        payment_id = payload.get("payment_id")
+
+        app.logger.info(
+            f"NOWPayments webhook: {payment_id} -> {payment_status}"
+        )
+
+        if not invoice_id:
+            return "No invoice id", 400
+
+        invoice = Invoice.query.filter_by(invoice_id=str(invoice_id)).first()
         if not invoice:
             return "Invoice not found", 404
 
-        # Idempotency: If already marked paid, ignore to prevent duplicate alerts
-        if invoice.status in PAID_STATUSES:
+        # 7️⃣ Idempotency
+        if invoice.status == "finished":
             return "ok"
 
-        # Update Status
-        invoice.status = status
+        invoice.status = payment_status
         db.session.commit()
 
-        app.logger.info(f"📩 Webhook: [{track_id}] -> {status}")
-
-        if status in PAID_STATUSES:
+        # 8️⃣ TELEGRAM ALERT ONLY WHEN FINISHED
+        if payment_status == "finished":
             msg = (
-                f"💰 <b>PAYMENT CONFIRMED!</b>\n"
+                f"💰 <b>PAYMENT CONFIRMED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"<b>Amount:</b> {invoice.amount_usd} USD\n"
-                f"<b>Total Paid:</b> {invoice.amount_kes} KES\n"
-                f"<b>Customer Phone:</b> {invoice.phone}\n"
-                f"<b>Invoice ID:</b> {track_id}\n"
+                f"<b>USD:</b> {invoice.amount_usd}\n"
+                f"<b>KES:</b> {invoice.amount_kes}\n"
+                f"<b>Phone:</b> {invoice.phone}\n"
+                f"<b>Invoice ID:</b> {invoice.invoice_id}\n"
+                f"<b>Payment ID:</b> {payment_id}\n"
                 f"━━━━━━━━━━━━━━━━━━"
             )
             send_telegram_alert(msg)
 
         return "ok"
 
-    except Exception as e:
-        app.logger.exception("Webhook Processing Error")
+    except Exception:
+        app.logger.exception("NOWPayments webhook error")
         db.session.rollback()
         return "error", 500
 
@@ -299,7 +317,6 @@ def oxapay_webhook():
 # =========================================
 # 4. CONTACT FORM EMAIL
 # =========================================
-
 @app.route("/api/contact", methods=["POST"])
 def contact_form():
     try:
