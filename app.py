@@ -100,6 +100,30 @@ FRONTEND_URL = 'http://localhost:3000'
 
 NOWPAYMENTS_API_KEY = os.getenv('NOWPAYMENTS_API_KEY')
 
+
+TOP_ASSETS = [
+    {"value": "btc", "label": "BTC"},
+    {"value": "eth", "label": "ETH"},
+    {"value": "ltc", "label": "LTC"},
+    {"value": "xrp", "label": "XRP"},
+    {"value": "usdt", "label": "USDT"},
+    {"value": "usdc", "label": "USDC"},
+    {"value": "bnb", "label": "BNB"},
+    {"value": "doge", "label": "DOGE"},
+    {"value": "trx", "label": "TRX"},
+    {"value": "ada", "label": "ADA"},
+    {"value": "bch", "label": "BCH"},
+    {"value": "xmr", "label": "XMR"},
+    {"value": "xlm", "label": "XLM"},
+    {"value": "dash", "label": "DASH"},
+    {"value": "zec", "label": "ZEC"},
+    {"value": "link", "label": "LINK"},
+    {"value": "uni", "label": "UNI"},
+    {"value": "algo", "label": "ALGO"},
+    {"value": "dai", "label": "DAI"},
+    {"value": "vet", "label": "VET"},
+]
+
 # --- TELEGRAM HELPER ---
 
 
@@ -138,6 +162,15 @@ def health_check():
 # =========================================
 
 
+# =========================================
+# GET AVAILABLE CRYPTO CURRENCIES
+# =========================================
+
+@app.route("/api/currencies", methods=["GET"])
+def get_currencies():
+    return TOP_ASSETS
+
+
 @app.route("/api/create-trade", methods=["POST"])
 def create_trade():
     try:
@@ -145,6 +178,7 @@ def create_trade():
         usd = float(data.get("usd", 0))
         kes = float(data.get("kes", 0))
         phone = data.get("phone")
+        pay_currency = data.get("currency")
 
         # Input Validation
         if kes > 100000:  # Adjusted limit, verify your needs
@@ -164,7 +198,7 @@ def create_trade():
         payload = {
             "price_amount": usd,
             "price_currency": "usd",
-            "pay_currency": "ltc",  # get from ui
+            "pay_currency": pay_currency,
             "ipn_callback_url": f"{PUBLIC_BASE_URL}",
             "order_id": my_order_id,
             "order_description": f"Order for {phone}",
@@ -290,15 +324,28 @@ def check_payment_status(payment_id):
 
         # Telegram alert ONLY on important statuses AND status change
         if new_status in ALERT_STATUSES and new_status != old_status:
-            send_telegram_alert(
-                f"""
-                    <b>💰 Payment Update</b>
-                    Payment ID: <code>{payment_id}</code>
-                    Status: <b>{new_status}</b>
-                    Paid: {data.get('actually_paid')}
-                    Expected: {data.get('price_amount')} {data.get('price_currency')}
-                    """
+
+            status_icons = {
+                "finished": "🟢",
+                "partially_paid": "🟠",
+                "failed": "🔴",
+                "expired": "🔴",
+                "refunded": "🔴",
+            }
+
+            icon = status_icons.get(new_status, "ℹ️")
+
+            msg = (
+                f"💰 <b>PAYMENT ALERT {icon}!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"<b>Receipt ID:</b> {payment_id}\n"
+                f"<b>Status:</b> {new_status} USD\n"
+                f"<b>Amount:</b> {invoice.amount_usd} USD\n"
+                f"<b>Total Paid:</b> {invoice.amount_kes} KES\n"
+                f"<b>Customer Phone:</b> {invoice.phone}\n"
+                f"━━━━━━━━━━━━━━━━━━"
             )
+            send_telegram_alert(msg)
 
         return new_status
 

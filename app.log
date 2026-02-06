@@ -1,0 +1,6 @@
+[2026-02-06 17:43:43,217] ERROR in app: NowPay Error: pay_currency must be a string
+[2026-02-06 17:45:20,255] ERROR in app: NowPay Error: Crypto amount 0.00008553 is less than minimal
+[2026-02-06 17:46:55,282] ERROR in app: NowPay Error: Crypto amount 0.00000248 is less than minimal
+[2026-02-06 17:51:24,990] ERROR in app: NowPay Error: Crypto amount 0.00000249 is less than minimal
+[2026-02-06 17:52:46,514] ERROR in app: NowPay Error: Can not get estimate from USD to USDT
+[2026-02-06 17:53:20,929] ERROR in app: NowPay Error: Crypto amount 0.00008525 is less than minimal
