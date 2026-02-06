@@ -56,19 +56,28 @@ class Invoice(db.Model):
     __tablename__ = 'invoices'
 
     id = db.Column(db.Integer, primary_key=True)
+
     order_id = db.Column(db.String(100), unique=True, nullable=False)
-    invoice_id = db.Column(db.String(100), nullable=False)  # OxaPay Track ID
+    payment_id = db.Column(db.String(100), unique=True, nullable=False)
+
     phone = db.Column(db.String(50), nullable=False)
+
     amount_usd = db.Column(db.Float, nullable=False)
     amount_kes = db.Column(db.Float, nullable=False)
-    pay_url = db.Column(db.String(255))
-    status = db.Column(db.String(50), default="pending")
+
+    pay_address = db.Column(db.String(255))
+    pay_currency = db.Column(db.String(20))
+
+    payment_status = db.Column(db.String(50), default="waiting")
+
+    actually_paid = db.Column(db.Float, nullable=True)
+    outcome_amount = db.Column(db.Float, nullable=True)
+    outcome_currency = db.Column(db.String(20), nullable=True)
+
+    raw_response = db.Column(db.Text, nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
-
-    # Store raw response as JSON text since MySQL doesn't natively do BSON like Mongo
-    # (unless using JSON type, but Text is safer for older MariaDB versions)
-    raw_response = db.Column(db.Text, nullable=True)
 
 
 # Create tables if they don't exist (Run this once)
@@ -77,9 +86,17 @@ with app.app_context():
 
 # CONSTANTS
 PAID_STATUSES = ["paid", "manual_accept", "confirmed", "completed", "success"]
+ALERT_STATUSES = [
+    "partially_paid",
+    "finished",
+    "failed",
+    "refunded",
+    "expired"
+]
 OXAPAY_KEY = os.getenv('OXAPAY_API_KEY')
 PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', "https://api.daze-t.com")
 FRONTEND_URL = os.getenv('FRONTEND_URL', "https://daze-t.com")
+FRONTEND_URL = 'http://localhost:3000'
 
 NOWPAYMENTS_API_KEY = os.getenv('NOWPAYMENTS_API_KEY')
 
@@ -139,45 +156,56 @@ def create_trade():
 
         my_order_id = f"INV-{int(time.time() * 1000)}"
 
-        # OxaPay Request
-        url = "https://api.nowpayments.io/v1/invoice"
+        # Create NOWPayment
+        url = "https://api.nowpayments.io/v1/payment"
         headers = {"x-api-key": NOWPAYMENTS_API_KEY,
                    "Content-Type": "application/json"}
 
         payload = {
-
             "price_amount": usd,
             "price_currency": "usd",
+            "pay_currency": "ltc",  # get from ui
+            "ipn_callback_url": f"{PUBLIC_BASE_URL}",
             "order_id": my_order_id,
             "order_description": f"Order for {phone}",
-            "ipn_callback_url": f"{PUBLIC_BASE_URL}/nowpayment/webhook",
-            "success_url": f"{PUBLIC_BASE_URL}/api/success-redirect?orderId={my_order_id}",
-            "cancel_url": f"{PUBLIC_BASE_URL}/api/success-redirect?orderId={my_order_id}",
         }
 
         response = requests.post(
             url, json=payload, headers=headers, timeout=10)
         result = response.json()
 
-        if result.get('id'):
+        if result.get('payment_id'):
 
             # Save to MySQL
             new_invoice = Invoice(
                 order_id=my_order_id,
-                invoice_id=result.get('id'),
+                payment_id=result.get("payment_id"),
+
                 phone=phone,
-                amount_usd=usd,
+                amount_usd=result.get("price_amount"),
                 amount_kes=kes,
-                pay_url=result.get('invoice_url'),
-                raw_response=json.dumps(result)  # Save raw JSON as string
+
+                pay_address=result.get("pay_address"),
+                pay_currency=result.get("pay_currency"),
+
+                payment_status=result.get("payment_status"),
+
+                raw_response=json.dumps(result)
             )
 
             db.session.add(new_invoice)
             db.session.commit()
 
+            # GET USER TO A PAGE TO SHOW A BLINKING STATUS OF THE PAYMENT
             return jsonify({
-                "payment_url": result.get('invoice_url'),
-                "track_id": result.get('id')
+                'payment_id': result.get('payment_id'),
+                'payment_status': result.get('payment_status'),
+                'pay_address': result.get('pay_address'),
+                'pay_currency': result.get('pay_currency'),
+                'price_amount': result.get('price_amount'),
+                # frontend-friendly payment page
+                "payment_url": f"{FRONTEND_URL}/pay/{result.get('payment_id')}"
+
             })
         else:
             app.logger.error(f"NowPay Error: {result.get('message')}")
@@ -210,7 +238,7 @@ def success_redirect():
         # Redirect to Frontend Success Page
         react_url = (
             f"{FRONTEND_URL}/success?"
-            f"trackId={invoice.invoice_id}&"
+            f"trackId={invoice.order_id}&"
             f"amount={invoice.amount_kes}&"
             f"phone={invoice.phone}"
         )
@@ -221,102 +249,125 @@ def success_redirect():
         return redirect(FRONTEND_URL)
 
 
-# =========================================
-# 3. WEBHOOK (With Security Checks)
-# =========================================
-@app.route("/nowpayment/webhook", methods=["POST"])
-def nowpayment_webhook():
-    print('WEBHOOK CALLED')
+#  have a trigger from user, something like hit confirm after sending payment
+
+
+def check_payment_status(payment_id):
+    url = f"https://api.nowpayments.io/v1/payment/{payment_id}"
+    headers = {
+        "x-api-key": NOWPAYMENTS_API_KEY,
+        "Content-Type": "application/json"
+    }
+
     try:
-        # 1️⃣ Read signature
-        received_sig = request.headers.get("x-nowpayments-sig")
-        if not received_sig:
-            app.logger.warning("Missing x-nowpayments-sig")
-            return "Unauthorized", 401
+        res = requests.get(url, headers=headers, timeout=10)
+        data = res.json()
 
-        # 2️⃣ Load JSON body
-        payload = request.get_json()
+        if not data.get("payment_status"):
+            logger.warning(f"No status returned for {payment_id}")
+            return None
 
-        print('PAYLOAD ********', payload)
-        if not payload:
-            return "Invalid payload", 400
-
-        # 3️⃣ Sort payload recursively
-        def sort_object(obj):
-            if isinstance(obj, dict):
-                return {k: sort_object(obj[k]) for k in sorted(obj)}
-            if isinstance(obj, list):
-                return [sort_object(i) for i in obj]
-            return obj
-
-        sorted_payload = sort_object(payload)
-
-        # 4️⃣ Create HMAC
-        ipn_secret = os.getenv("NOWPAYMENTS_IPN_SECRET").strip()
-        signed_payload = json.dumps(
-            sorted_payload,
-            separators=(',', ':')
-        )
-
-        calculated_sig = hmac.new(
-            ipn_secret.encode(),
-            signed_payload.encode(),
-            hashlib.sha512
-        ).hexdigest()
-
-        # 5️⃣ Compare signatures
-        if not hmac.compare_digest(calculated_sig, received_sig):
-            app.logger.warning("Invalid NOWPayments signature")
-            return "Unauthorized", 401
-
-        # 6️⃣ Extract data
-        payment_status = payload.get("payment_status", "").lower()
-        invoice_id = payload.get("invoice_id")
-        payment_id = payload.get("payment_id")
-
-        app.logger.info(
-            f"NOWPayments webhook: {payment_id} -> {payment_status}"
-        )
-
-        if not invoice_id:
-            return "No invoice id", 400
-
-        invoice = Invoice.query.filter_by(invoice_id=str(invoice_id)).first()
+        invoice = Invoice.query.filter_by(payment_id=payment_id).first()
         if not invoice:
-            return "Invoice not found", 404
+            logger.error(f"Invoice not found for payment_id={payment_id}")
+            return None
 
-        # 7️⃣ Idempotency
-        if invoice.status == "finished":
-            return "ok"
+        old_status = invoice.payment_status
+        new_status = data.get("payment_status")
 
-        invoice.status = payment_status
+        # Update DB
+        invoice.payment_status = new_status
+        invoice.actually_paid = data.get("actually_paid")
+        invoice.outcome_amount = data.get("outcome_amount")
+        invoice.outcome_currency = data.get("outcome_currency")
+        invoice.raw_response = json.dumps(data)
+
         db.session.commit()
 
-        # 8️⃣ TELEGRAM ALERT ONLY WHEN FINISHED
-        if payment_status == "finished":
-            msg = (
-                f"💰 <b>PAYMENT CONFIRMED</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"<b>USD:</b> {invoice.amount_usd}\n"
-                f"<b>KES:</b> {invoice.amount_kes}\n"
-                f"<b>Phone:</b> {invoice.phone}\n"
-                f"<b>Invoice ID:</b> {invoice.invoice_id}\n"
-                f"<b>Payment ID:</b> {payment_id}\n"
-                f"━━━━━━━━━━━━━━━━━━"
+        logger.info(
+            f"[PAYMENT POLL] {payment_id}: {old_status} → {new_status}"
+        )
+
+        # Telegram alert ONLY on important statuses AND status change
+        if new_status in ALERT_STATUSES and new_status != old_status:
+            send_telegram_alert(
+                f"""
+                    <b>💰 Payment Update</b>
+                    Payment ID: <code>{payment_id}</code>
+                    Status: <b>{new_status}</b>
+                    Paid: {data.get('actually_paid')}
+                    Expected: {data.get('price_amount')} {data.get('price_currency')}
+                    """
             )
-            send_telegram_alert(msg)
 
-        return "ok"
+        return new_status
 
-    except Exception:
-        app.logger.exception("NOWPayments webhook error")
-        db.session.rollback()
-        return "error", 500
+    except Exception as e:
+        logger.exception(f"Polling failed for {payment_id}")
+        return None
+
+
+'''
+GET
+Get payment status
+https://api.nowpayments.io/v1/payment/:payment_id
+Get the actual information about the payment. You need to provide the ID of the payment in the request.
+
+NOTE! You should make the get payment status request with the same API key that you used in the create payment request.
+Here is the list of available statuses:
+
+waiting - waiting for the customer to send the payment. The initial status of each payment;
+confirming - the transaction is being processed on the blockchain. Appears when NOWPayments detect the funds from the user on the blockchain;
+confirmed - the process is confirmed by the blockchain. Customer’s funds have accumulated enough confirmations;
+sending - the funds are being sent to your personal wallet. We are in the process of sending the funds to you;
+partially_paid - it shows that the customer sent the less than the actual price. Appears when the funds have arrived in your wallet;
+finished - the funds have reached your personal address and the payment is finished;
+failed - the payment wasn't completed due to the error of some kind;
+refunded - the funds were refunded back to the user;
+expired - the user didn't send the funds to the specified address in the 7 days time window;
+Additional info:
+
+outcome_amount - this parameter shows the amount that will be (or is already) received on your Outcome Wallet once the transaction is settled;
+outcome_currency - this parameter shows the currency in which the transaction will be settled;
+invoice_id - this parameter shows invoice ID from which the payment was created;
+
+
+'''
+
+
+@app.route("/api/check-payment", methods=["GET"])
+def check_payment():
+    payment_id = request.args.get("payment_id")
+    if not payment_id:
+        return jsonify({"error": "payment_id required"}), 400
+
+    status = check_payment_status(payment_id)
+    invoice = Invoice.query.filter_by(payment_id=payment_id).first()
+
+    if not invoice:
+        return jsonify({"error": "Invoice not found"}), 404
+
+    # Parse the raw response to get the exact crypto pay_amount
+    raw_data = json.loads(invoice.raw_response) if invoice.raw_response else {}
+
+    return jsonify({
+        "payment_id": invoice.payment_id,
+        "status": invoice.payment_status,
+        "pay_address": invoice.pay_address,
+        # Exact crypto amount
+        "pay_amount": raw_data.get("pay_amount", invoice.amount_usd),
+        "pay_currency": invoice.pay_currency,
+        "price_amount": invoice.amount_usd,  # The original USD price
+        "amount_kes": invoice.amount_kes,
+        "phone": invoice.phone
+    })
 
 
 # =========================================
-# 4. CONTACT FORM EMAIL
+# . CONTACT FORM EMAIL
 # =========================================
+
+
 @app.route("/api/contact", methods=["POST"])
 def contact_form():
     try:
