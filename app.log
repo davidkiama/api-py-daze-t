@@ -4,3 +4,10 @@
 [2026-02-06 17:51:24,990] ERROR in app: NowPay Error: Crypto amount 0.00000249 is less than minimal
 [2026-02-06 17:52:46,514] ERROR in app: NowPay Error: Can not get estimate from USD to USDT
 [2026-02-06 17:53:20,929] ERROR in app: NowPay Error: Crypto amount 0.00008525 is less than minimal
+[2026-02-06 19:26:37,722] ERROR in app: NowPay Error: Crypto amount 0.00006473 is less than minimal
+[2026-02-06 19:27:41,029] ERROR in app: NowPay Error: Crypto amount 0.00000589 is less than minimal
+[2026-02-06 19:28:38,464] ERROR in app: NowPay Error: Can not get estimate from USD to USDT
+[2026-02-06 19:29:01,159] ERROR in app: NowPay Error: Can not get estimate from USD to USDT
+[2026-02-06 19:29:08,836] ERROR in app: NowPay Error: Can not get estimate from USD to USDT
+[2026-02-06 19:38:11,572] ERROR in app: NowPay Error: Crypto amount 0.00000717 is less than minimal
+[2026-02-06 19:43:40,469] ERROR in app: NowPay Error: Crypto amount 0.00000717 is less than minimal

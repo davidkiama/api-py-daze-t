@@ -96,7 +96,7 @@ ALERT_STATUSES = [
 OXAPAY_KEY = os.getenv('OXAPAY_API_KEY')
 PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', "https://api.daze-t.com")
 FRONTEND_URL = os.getenv('FRONTEND_URL', "https://daze-t.com")
-FRONTEND_URL = 'http://localhost:3000'
+# FRONTEND_URL = 'http://localhost:3000'
 
 NOWPAYMENTS_API_KEY = os.getenv('NOWPAYMENTS_API_KEY')
 
@@ -105,24 +105,22 @@ TOP_ASSETS = [
     {"value": "btc", "label": "BTC"},
     {"value": "eth", "label": "ETH"},
     {"value": "ltc", "label": "LTC"},
-    {"value": "xrp", "label": "XRP"},
-    {"value": "usdt", "label": "USDT"},
-    {"value": "usdc", "label": "USDC"},
+
+    # Memo / Tag coins (kept)
+    {"value": "ada", "label": "ADA"},
+    {"value": "algo", "label": "ALGO"},
+    {"value": "bch", "label": "BCH"},
     {"value": "bnb", "label": "BNB"},
+    {"value": "dash", "label": "DASH"},
     {"value": "doge", "label": "DOGE"},
     {"value": "trx", "label": "TRX"},
-    {"value": "ada", "label": "ADA"},
-    {"value": "bch", "label": "BCH"},
-    {"value": "xmr", "label": "XMR"},
     {"value": "xlm", "label": "XLM"},
-    {"value": "dash", "label": "DASH"},
-    {"value": "zec", "label": "ZEC"},
-    {"value": "link", "label": "LINK"},
-    {"value": "uni", "label": "UNI"},
-    {"value": "algo", "label": "ALGO"},
-    {"value": "dai", "label": "DAI"},
-    {"value": "vet", "label": "VET"},
+    {"value": "xmr", "label": "XMR"},
+    {"value": "xrp", "label": "XRP"},
+    {"value": "zec", "label": "ZEC"}
+
 ]
+
 
 # --- TELEGRAM HELPER ---
 
