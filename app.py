@@ -3,7 +3,8 @@ import requests
 from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from flask import Flask, request, jsonify, redirect
+from flask import Flask, request, jsonify, redirect, send_file
+from backtest_service import run_backtest_for_month
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 import smtplib
@@ -374,6 +375,38 @@ def check_payment():
         "amount_kes": invoice.amount_kes,
         "phone": invoice.phone
     })
+
+
+# =========================================
+# 5. OANDA BACKTEST ROUTE
+# =========================================
+@app.route("/api/run-backtest", methods=["POST"])
+def api_run_backtest():
+    try:
+        data = request.get_json()
+        instrument = data.get("instrument")
+        year = int(data.get("year"))
+        month = int(data.get("month"))
+
+        if not instrument or not year or not month:
+            return jsonify({"error": "Missing required parameters"}), 400
+
+        app.logger.info(f"Running backtest for {instrument} - {month}/{year}")
+
+        # Call the refactored Python module
+        filepath = run_backtest_for_month(instrument, year, month)
+
+        # Send the generated Excel file back to the user
+        return send_file(
+            filepath,
+            as_attachment=True,
+            download_name=f"{instrument}_backtest.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except Exception as e:
+        app.logger.error(f"Backtest Error: {str(e)}")
+        return jsonify({"error": "Failed to generate backtest report"}), 500
 
 
 # =========================================
