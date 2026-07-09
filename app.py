@@ -123,6 +123,26 @@ TOP_ASSETS = [
 ]
 
 
+TOP_CURRENCY_PAIRS = [
+    {"value": "AUD_JPY", "label": "AUDJPY"},
+    {"value": "AUD_USD", "label": "AUDUSD"},
+    {"value": "AUD_CHF", "label": "AUDCHF"},
+
+
+    {"value": "USD_CAD", "label": "USDCAD"},
+    {"value": "USD_CHF", "label": "USDCHF"},
+    {"value": "USD_JPY", "label": "USDJPY"},
+    {"value": "GBP_CAD", "label": "GBPCAD"},
+    {"value": "GBP_JPY", "label": "GBPJPY"},
+    {"value": "GBP_USD", "label": "GBPUSD"},
+    {"value": "GBP_AUD", "label": "GBPAUD"},
+    {"value": "EUR_CAD", "label": "EURCAD"},
+    {"value": "NZD_JPY", "label": "NZDJPY"},
+
+
+]
+
+
 # --- TELEGRAM HELPER ---
 
 
@@ -164,6 +184,11 @@ def health_check():
 @app.route("/api/currencies", methods=["GET"])
 def get_currencies():
     return TOP_ASSETS
+
+
+@app.route("/api/currency-pairs", methods=["GET"])
+def get_currency_pairs():
+    return TOP_CURRENCY_PAIRS
 
 
 @app.route("/api/create-trade", methods=["POST"])
