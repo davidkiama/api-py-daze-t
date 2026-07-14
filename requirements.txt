@@ -8,9 +8,15 @@ python-dotenv==1.0.0
 PyMySQL==1.1.0
 cryptography==42.0.0
 
-# Networking and API Requests
+# Networking, API Requests and Trading
 requests==2.31.0
 urllib3==2.1.0
+oandapyV20==0.7.2
 
-# Email and Security (New)
+# Data Analysis and Excel Processing
+pandas==2.2.2
+pytz==2024.1
+openpyxl==3.1.5
+
+# Email and Security
 secure-smtplib==0.1.1

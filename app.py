@@ -183,12 +183,12 @@ def health_check():
 
 @app.route("/api/currencies", methods=["GET"])
 def get_currencies():
-    return TOP_ASSETS
+    return jsonify(TOP_ASSETS)
 
 
 @app.route("/api/currency-pairs", methods=["GET"])
 def get_currency_pairs():
-    return TOP_CURRENCY_PAIRS
+    return jsonify(TOP_CURRENCY_PAIRS)
 
 
 @app.route("/api/create-trade", methods=["POST"])
